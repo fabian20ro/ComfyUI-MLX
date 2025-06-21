@@ -25,7 +25,12 @@ class MLXDecoder:
     
     def decode(self, latent_image, mlx_vae):
 
-        decoded = mlx_vae(latent_image)
+        if isinstance(latent_image, dict) and "samples" in latent_image:
+            latent = latent_image["samples"]
+        else:
+            latent = latent_image
+
+        decoded = mlx_vae(latent)
         decoded = mx.clip(decoded / 2 + 0.5, 0, 1)
 
         mx.eval(decoded)
@@ -89,7 +94,7 @@ class MLXSampler:
 
         latents = latents.astype(mlx_model.activation_dtype)
 
-        return (latents,)
+        return ({"samples": latents},)
 
 
 class MLXLoadFlux:
