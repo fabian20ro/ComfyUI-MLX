@@ -197,16 +197,19 @@ class DiffusionPipeline:
         cfg_weight: float = 7.5,
         negative_text: str = "",
     ):
-        tokens_l = self._tokenize(
-            self.tokenizer_l,
-            text,
-            (negative_text if cfg_weight > 1 else None),
-        )
-        tokens_g = self._tokenize(
-            self.tokenizer_g,
-            text,
-            (negative_text if cfg_weight > 1 else None),
-        )
+        use_uncond = cfg_weight > 0
+
+        tokens_cond_l = self._tokenize(self.tokenizer_l, text, None)
+        tokens_cond_g = self._tokenize(self.tokenizer_g, text, None)
+
+        if use_uncond:
+            tokens_uncond_l = self._tokenize(self.tokenizer_l, negative_text, None)
+            tokens_uncond_g = self._tokenize(self.tokenizer_g, negative_text, None)
+            tokens_l = mx.concatenate([tokens_uncond_l, tokens_cond_l], axis=0)
+            tokens_g = mx.concatenate([tokens_uncond_g, tokens_cond_g], axis=0)
+        else:
+            tokens_l = tokens_cond_l
+            tokens_g = tokens_cond_g
 
         conditioning_l = self.clip_l(tokens_l)
         conditioning_g = self.clip_g(tokens_g)
@@ -234,11 +237,15 @@ class DiffusionPipeline:
         )
 
         if self.use_t5:
-            tokens_t5 = self._tokenize(
-                self.t5_tokenizer,
-                text,
-                (negative_text if cfg_weight > 1 else None),
-            )
+            tokens_cond_t5 = self._tokenize(self.t5_tokenizer, text, None)
+            if use_uncond:
+                tokens_uncond_t5 = self._tokenize(
+                    self.t5_tokenizer, negative_text, None
+                )
+                tokens_t5 = mx.concatenate([tokens_uncond_t5, tokens_cond_t5], axis=0)
+            else:
+                tokens_t5 = tokens_cond_t5
+
             t5_conditioning = self.t5_encoder(tokens_t5)
             mx.eval(t5_conditioning)
         else:
@@ -642,25 +649,28 @@ class FluxPipeline(DiffusionPipeline):
         cfg_weight: float = 7.5,
         negative_text: str = "",
     ):
-        tokens_l = self._tokenize(
-            self.tokenizer_l,
-            text,
-            (negative_text if cfg_weight > 1 else None),
-        )
-        conditioning_l = self.clip_l(tokens_l[[0], :])  # Ignore negative text
+        use_uncond = cfg_weight > 0
+
+        tokens_cond_l = self._tokenize(self.tokenizer_l, text, None)
+        if use_uncond:
+            tokens_uncond_l = self._tokenize(self.tokenizer_l, negative_text, None)
+            tokens_l = mx.concatenate([tokens_uncond_l, tokens_cond_l], axis=0)
+        else:
+            tokens_l = tokens_cond_l
+
+        conditioning_l = self.clip_l(tokens_l)
         pooled_conditioning = conditioning_l.pooled_output
 
-        tokens_t5 = self._tokenize(
-            self.t5_tokenizer,
-            text,
-            (negative_text if cfg_weight > 1 else None),
-        )
-        padded_tokens_t5 = mx.zeros((1, T5_MAX_LENGTH[self.model_version])).astype(
-            tokens_t5.dtype
-        )
-        padded_tokens_t5[:, : tokens_t5.shape[1]] = tokens_t5[
-            [0], :
-        ]  # Ignore negative text
+        tokens_cond_t5 = self._tokenize(self.t5_tokenizer, text, None)
+        if use_uncond:
+            tokens_uncond_t5 = self._tokenize(self.t5_tokenizer, negative_text, None)
+            padded_tokens_t5 = mx.zeros((2, T5_MAX_LENGTH[self.model_version])).astype(tokens_cond_t5.dtype)
+            padded_tokens_t5[0, : tokens_uncond_t5.shape[1]] = tokens_uncond_t5[0]
+            padded_tokens_t5[1, : tokens_cond_t5.shape[1]] = tokens_cond_t5[0]
+        else:
+            padded_tokens_t5 = mx.zeros((1, T5_MAX_LENGTH[self.model_version])).astype(tokens_cond_t5.dtype)
+            padded_tokens_t5[0, : tokens_cond_t5.shape[1]] = tokens_cond_t5[0]
+
         t5_conditioning = self.t5_encoder(padded_tokens_t5)
         mx.eval(t5_conditioning)
         conditioning = t5_conditioning
@@ -676,12 +686,12 @@ class CFGDenoiser(nn.Module):
         self.model = model
 
     def cache_modulation_params(self, pooled_text_embeddings, sigmas, cfg_weight=0.0):
-        if cfg_weight > 0:
-            pooled_text_embeddings = mx.concatenate(
-                [pooled_text_embeddings] * 2, axis=0
-            )
+        if cfg_weight <= 0 and len(pooled_text_embeddings) > 1:
+            pooled_text_embeddings = pooled_text_embeddings[:1]
+
         self.model.mmdit.cache_modulation_params(
-            pooled_text_embeddings, sigmas.astype(self.model.activation_dtype)
+            pooled_text_embeddings.astype(self.model.activation_dtype),
+            sigmas.astype(self.model.activation_dtype),
         )
 
     def clear_cache(self):
@@ -698,15 +708,15 @@ class CFGDenoiser(nn.Module):
         cfg_weight: float = 7.5,
         pooled_conditioning=None,
     ):
-        if cfg_weight <= 0:
+        if cfg_weight <= 0 or conditioning.shape[0] == 1:
             logger.debug("CFG Weight disabled")
             x_t_mmdit = x_t.astype(self.model.activation_dtype)
-            txt_cond = conditioning
+            txt_cond = conditioning[:1]
         else:
-            x_t_mmdit = mx.concatenate([x_t] * 2, axis=0).astype(
+            x_t_mmdit = mx.concatenate([x_t, x_t], axis=0).astype(
                 self.model.activation_dtype
             )
-            txt_cond = mx.concatenate([conditioning] * 2, axis=0)
+            txt_cond = conditioning
 
         mmdit_input = {
             "latent_image_embeddings": x_t_mmdit,
@@ -716,11 +726,11 @@ class CFGDenoiser(nn.Module):
 
         mmdit_output = self.model.mmdit(**mmdit_input)
         eps_pred = self.model.sampler.calculate_denoised(sigma, mmdit_output, x_t_mmdit)
-        if cfg_weight <= 0:
+        if cfg_weight <= 0 or conditioning.shape[0] == 1:
             return eps_pred
         else:
-            eps_text, eps_neg = eps_pred.split(2)
-            return eps_neg + cfg_weight * (eps_text - eps_neg)
+            eps_uncond, eps_cond = eps_pred.split(2)
+            return eps_uncond + cfg_weight * (eps_cond - eps_uncond)
 
 
 class LatentFormat:
