@@ -1,7 +1,7 @@
 import numpy as np
 import PIL.Image
 import mlx.core as mx
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Callable
 from PIL import Image
 from .diffusionkit.mlx.tokenizer import Tokenizer, T5Tokenizer
 from .diffusionkit.mlx.t5 import SD3T5Encoder
@@ -24,11 +24,9 @@ class MLXDecoder:
     FUNCTION = "decode"
     
     def decode(self, latent_image, mlx_vae):
+        # type: (mx.array, Callable[[mx.array], mx.array]) -> Tuple[torch.Tensor]
 
-        if isinstance(latent_image, dict) and "samples" in latent_image:
-            latent = latent_image["samples"]
-        else:
-            latent = latent_image
+        latent = latent_image
 
         decoded = mlx_vae(latent)
         decoded = mx.clip(decoded / 2 + 0.5, 0, 1)
@@ -68,17 +66,24 @@ class MLXSampler:
     RETURN_TYPES = ("LATENT",)
     FUNCTION = "generate_image"
 
-    def generate_image(self, mlx_model, seed, steps, cfg, mlx_positive_conditioning, latent_image, denoise): 
-        
+    def generate_image(
+        self,
+        mlx_model,
+        seed,
+        steps,
+        cfg,
+        mlx_positive_conditioning,
+        latent_image,
+        denoise,
+    ):
+        # type: (FluxPipeline, int, int, float, dict, mx.array, float) -> Tuple[mx.array]
+
         conditioning = mlx_positive_conditioning["conditioning"]
         pooled_conditioning = mlx_positive_conditioning["pooled_conditioning"]
-        num_steps = steps 
+        num_steps = steps
         cfg_weight = cfg
-            
-        if isinstance(latent_image, dict) and "samples" in latent_image:
-            latent = latent_image["samples"]
-        else:
-            latent = latent_image
+
+        latent = latent_image
 
         batch, channels, height, width = latent.shape
 
@@ -99,7 +104,7 @@ class MLXSampler:
 
         latents = latents.astype(mlx_model.activation_dtype)
 
-        return ({"samples": latents},)
+        return (latents,)
 
 
 class MLXLoadFlux:
