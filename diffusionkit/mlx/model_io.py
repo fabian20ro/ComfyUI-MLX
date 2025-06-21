@@ -724,9 +724,20 @@ def load_flux(
     ):  # 4-bit ckpt already adjusted
         nn.quantize(model)
 
-    weights = {
-        k: v.astype(dtype) if v.dtype != mx.uint32 else v for k, v in weights.items()
-    }
+    if model_key == "argmaxinc/mlx-FLUX.1-schnell-4bit-quantized":
+        # quantized checkpoints store packed weights. MLX expects these in
+        # uint32 so we keep/cast them to that dtype instead of float32.
+        weights = {
+            k: v.astype(mx.uint32) if v.dtype != mx.uint32 else v
+            for k, v in weights.items()
+        }
+    else:
+        # retain existing uint32 weights (if any) and cast other tensors to
+        # the selected floating point dtype
+        weights = {
+            k: v.astype(dtype) if v.dtype != mx.uint32 else v
+            for k, v in weights.items()
+        }
     if only_modulation_dict:
         weights = {k: v for k, v in weights.items() if "adaLN" in k}
         return tree_flatten(weights)
