@@ -24,7 +24,7 @@ class MLXDecoder:
     FUNCTION = "decode"
     
     def decode(self, latent_image, mlx_vae):
-        # type: (mx.array, Callable[[mx.array], mx.array]) -> Tuple[torch.Tensor]
+        # type: (dict | mx.array, Callable[[mx.array], mx.array]) -> Tuple[torch.Tensor]
 
         latent = latent_image
 
@@ -76,14 +76,17 @@ class MLXSampler:
         latent_image,
         denoise,
     ):
-        # type: (FluxPipeline, int, int, float, dict, mx.array, float) -> Tuple[mx.array]
+        # type: (FluxPipeline, int, int, float, dict, dict | mx.array, float) -> Tuple[mx.array]
 
         conditioning = mlx_positive_conditioning["conditioning"]
         pooled_conditioning = mlx_positive_conditioning["pooled_conditioning"]
         num_steps = steps
         cfg_weight = cfg
 
-        latent = latent_image
+        if isinstance(latent_image, dict) and "samples" in latent_image:
+            latent = latent_image["samples"]
+        else:
+            latent = latent_image
 
         batch, channels, height, width = latent.shape
 

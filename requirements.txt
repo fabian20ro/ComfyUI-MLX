@@ -6,3 +6,4 @@ jaxtyping
 transformers
 pillow
 sentencepiece
+diffusionkit
