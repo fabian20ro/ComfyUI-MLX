@@ -75,8 +75,13 @@ class MLXSampler:
         num_steps = steps 
         cfg_weight = cfg
             
-        batch, channels, height, width = latent_image["samples"].shape
-        
+        if isinstance(latent_image, dict) and "samples" in latent_image:
+            latent = latent_image["samples"]
+        else:
+            latent = latent_image
+
+        batch, channels, height, width = latent.shape
+
         latent_size = (height, width)
         
         latents, iter_time  = mlx_model.denoise_latents(
