@@ -26,10 +26,7 @@ class MLXDecoder:
     def decode(self, latent_image, mlx_vae):
         # type: (dict | mx.array, Callable[[mx.array], mx.array]) -> Tuple[torch.Tensor]
 
-        if isinstance(latent_image, dict) and "samples" in latent_image:
-            latent = latent_image["samples"]
-        else:
-            latent = latent_image
+        latent = latent_image
 
         decoded = mlx_vae(latent)
         decoded = mx.clip(decoded / 2 + 0.5, 0, 1)
@@ -110,7 +107,7 @@ class MLXSampler:
 
         latents = latents.astype(mlx_model.activation_dtype)
 
-        return ({"samples": latents},)
+        return (latents,)
 
 
 class MLXLoadFlux:
