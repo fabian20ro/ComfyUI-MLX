@@ -675,7 +675,11 @@ class CFGDenoiser(nn.Module):
         super().__init__()
         self.model = model
 
-    def cache_modulation_params(self, pooled_text_embeddings, sigmas):
+    def cache_modulation_params(self, pooled_text_embeddings, sigmas, cfg_weight=0.0):
+        if cfg_weight > 0:
+            pooled_text_embeddings = mx.concatenate(
+                [pooled_text_embeddings] * 2, axis=0
+            )
         self.model.mmdit.cache_modulation_params(
             pooled_text_embeddings, sigmas.astype(self.model.activation_dtype)
         )
@@ -697,13 +701,16 @@ class CFGDenoiser(nn.Module):
         if cfg_weight <= 0:
             logger.debug("CFG Weight disabled")
             x_t_mmdit = x_t.astype(self.model.activation_dtype)
+            txt_cond = conditioning
         else:
             x_t_mmdit = mx.concatenate([x_t] * 2, axis=0).astype(
                 self.model.activation_dtype
             )
+            txt_cond = mx.concatenate([conditioning] * 2, axis=0)
+
         mmdit_input = {
             "latent_image_embeddings": x_t_mmdit,
-            "token_level_text_embeddings": mx.expand_dims(conditioning, 2),
+            "token_level_text_embeddings": mx.expand_dims(txt_cond, 2),
             "timestep": mx.broadcast_to(timestep, [len(x_t_mmdit)]),
         }
 
@@ -766,7 +773,9 @@ def sample_euler(model: CFGDenoiser, x, sigmas, extra_args=None):
     timesteps = model.model.sampler.timestep(sigmas).astype(
         model.model.activation_dtype
     )
-    model.cache_modulation_params(extra_args.pop("pooled_conditioning"), timesteps)
+    pooled_conditioning = extra_args.pop("pooled_conditioning")
+    cfg_weight = extra_args.get("cfg_weight", 0.0)
+    model.cache_modulation_params(pooled_conditioning, timesteps, cfg_weight)
 
     iter_time = []
     for i in t:
